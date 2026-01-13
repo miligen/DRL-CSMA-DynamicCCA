@@ -1,4 +1,3 @@
-# environment.py
 import numpy as np
 from config import *
 from utils import *
@@ -76,7 +75,7 @@ class AdHocEnv:
 
                 # 获取状态
                 state = node.get_state_vector()
-                # agent选择动作
+                # agent选择动作 (独立学习者)
                 action_idx = node.agent.select_action(state, mask)
                 target, w_max, th_dbm = self.decode_action(node, action_idx)
 
@@ -93,18 +92,11 @@ class AdHocEnv:
                 node.reset_stats_for_new_action()
                 node.status = 'BACKOFF'
 
-        # === 3. 微时隙步进 (CSMA 过程 - 修复版) ===
-
-        # 3.1: 初始化：本时隙开始时，已经在 TX 的节点
-        # 注意：跨时隙系统中，上个时隙就在发的节点，这个时隙还在发
-        # 我们假设 DATA_TIME = 1ms, SLOT_DURATION > 1ms，
-        # 但为简化，我们在 slot 层面认为一次 TX 持续整个 slot 的后半段。
-        # 这里 active_tx_nodes 仅用于记录本时隙内 *新触发* 或 *持续* 的发射
+        # === 3. 微时隙步进 (CSMA 过程 - 快照修复版) ===
         active_tx_nodes = []
 
         for t in range(max(CW_SET) + 1):
             # A. 【快照】本时刻的干扰源
-            # snapshot_emitters 包含：之前就已经在 TX 的 + 本微时隙刚转为 TX 的(下一轮生效)
             snapshot_emitters = [n for n in self.nodes if n.status == 'TX']
 
             # 用于记录本微时隙即将倒数归零的节点
@@ -137,9 +129,11 @@ class AdHocEnv:
                 node.ack_received = False
                 active_tx_nodes.append(node)
 
-        # === 4. 数据传输与 ACK 结算 ===
+        # === 4. 数据传输与 ACK 结算 (新增协作侦听逻辑) ===
         tx_nodes = [n for n in self.nodes if n.status == 'TX']
+        successful_pairs = []  # 记录本时隙 Data 成功的 (Tx, Rx) 对
 
+        # --- 4.1 Data 阶段判定 ---
         for tx in tx_nodes:
             rx = self.nodes[tx.target_id]
 
@@ -148,23 +142,43 @@ class AdHocEnv:
             intf = self.calculate_interference(rx, tx_nodes)
             intf = max(0.0, intf - sig)  # 数值保护
 
-            success = False
-            if rx.status != 'TX':
+            if rx.status != 'TX':  # 半双工约束
                 sinr = calculate_sinr(sig, intf)
                 if sinr >= SINR_THRESHOLD_DB:
-                    success = True
+                    successful_pairs.append((tx, rx))
 
-            # ACK 阶段 fixme: 记录确认接收时间，根据接收时间是否冲突判断ack是否成功
-            if success:
-                successful_receivers = [self.nodes[n.target_id] for n in tx_nodes if n.target_id != rx.id]
+        # --- 4.2 ACK 阶段 (含 Overhearing) ---
+        if successful_pairs:
+            # 所有的 ACK 发送者就是 Data 的接收者
+            ack_senders = [pair[1] for pair in successful_pairs]
+
+            # A. Tx 接收 ACK (决定是否发送成功)
+            for tx, rx in successful_pairs:
                 ack_sig = dbm_to_watt(TX_POWER_DBM + self.gain_matrix[rx.id, tx.id])
-                ack_intf = self.calculate_interference(tx, successful_receivers)
-                ack_intf = max(0.0, ack_intf - ack_sig)  # 数值保护
+                # 干扰源：除了 rx 以外的其他 ack_senders
+                ack_intf = self.calculate_interference(tx, ack_senders)
+                ack_intf = max(0.0, ack_intf - ack_sig)
 
                 if calculate_sinr(ack_sig, ack_intf) >= SINR_THRESHOLD_DB:
                     tx.ack_received = True
 
-        # === 5. 奖励计算与状态更新 ===
+            # B. 其他节点侦听 ACK (协作奖励来源)
+            for node in self.nodes:
+                # 只有处于 BACKOFF (正在避让) 的节点才统计 Overhearing
+                if node.status == 'BACKOFF':
+                    for tx, rx in successful_pairs:
+                        # 信号来自 ACK 发送者 (rx)
+                        ack_sig = dbm_to_watt(TX_POWER_DBM + self.gain_matrix[rx.id, node.id])
+                        # 干扰来自所有其他 ack_senders
+                        ack_intf = self.calculate_interference(node, ack_senders)
+                        ack_intf = max(0.0, ack_intf - ack_sig)
+
+                        if calculate_sinr(ack_sig, ack_intf) >= SINR_THRESHOLD_DB:
+                            node.obs_overheard_acks += 1
+                            # 听到一个就算有效，或者累加都可以，这里累加鼓励多听
+                            # break # 如果只想知道"是否"听到，可以break
+
+        # === 5. 奖励计算与状态更新 (修改后的逻辑) ===
         total_success = 0
 
         for node in self.nodes:
@@ -178,9 +192,12 @@ class AdHocEnv:
 
                 is_aggressive = (node.chosen_th_watt >= dbm_to_watt(TH_HIGH))
 
+                # --- 计算结果奖励 (R_outcome) ---
                 if node.ack_received:
                     r_outcome = ALPHA
                     if is_aggressive: r_outcome += LAMBDA_RS * i_avg
+
+                    # 更新状态
                     node.history_status[node.target_id] = 1
                     node.local_queues[node.target_id] = max(0, node.local_queues[node.target_id] - 1)
                     total_success += 1
@@ -189,8 +206,16 @@ class AdHocEnv:
                     if is_aggressive: r_outcome -= DELTA_PENALTY
                     node.history_status[node.target_id] = -1
 
-                r_delay = KAPPA_DELAY * node.obs_total_slots
-                reward = r_outcome - r_delay + (BETA * p_coll)  # 加上拥塞奖励
+                # --- 计算信道质量奖励 (R_channel) ---
+                # 奖励寻找空闲窗口：P_coll 越低，奖励越高
+                r_channel = BETA * (1.0 - p_coll)
+
+                # --- 计算协作侦听奖励 (R_coop) ---
+                # 奖励在退避期间听到了邻居的成功
+                r_coop = GAMMA_COOP * node.obs_overheard_acks
+
+                # 总奖励
+                reward = r_outcome + r_channel + r_coop
 
                 next_state = node.get_state_vector()
 
