@@ -1,10 +1,11 @@
 # models.py
-import torch
+import random
+from collections import deque
+
+import numpy as np
 import torch.nn as nn
 import torch.optim as optim
-import random
-import numpy as np
-from collections import deque
+
 from config import *
 
 
@@ -54,8 +55,10 @@ class DQNAgent:
             with torch.no_grad():
                 state_t = torch.FloatTensor(state).unsqueeze(0).to(DEVICE)
                 q_vals = self.policy_net(state_t)
-                mask_t = torch.BoolTensor(valid_mask).to(DEVICE)
+
                 mask_t = torch.BoolTensor(valid_mask).to(DEVICE).unsqueeze(0)
+                q_vals[~mask_t] = -1e9 # 将 mask 为 False (非法) 的位置的 Q 值设为负无穷 (-1e9)
+
                 return q_vals.max(1)[1].item()
         else:
             valid_indices = [i for i, x in enumerate(valid_mask) if x]

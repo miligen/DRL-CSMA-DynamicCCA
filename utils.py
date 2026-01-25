@@ -23,7 +23,6 @@ def calculate_path_loss(dist):
 
 def calculate_sinr(signal_watt, interference_watt):
     noise_watt = dbm_to_watt(NOISE_FLOOR_DBM)
-    # 【修复】强制干扰为非负
     interference_watt = max(0.0, interference_watt)
 
     sinr_linear = signal_watt / (interference_watt + noise_watt)

@@ -12,7 +12,7 @@ SEED = 42
 # ===========================
 NUM_NODES = 4
 DISTANCE = 50.0
-INTERFERENCE_RANGE = 120.0
+INTERFERENCE_RANGE = 90.0
 
 # ===========================
 # 3. 物理层 & 时隙结构
@@ -26,10 +26,10 @@ GUARD_TIME = 10e-6
 # 动作空间参数
 # 竞争窗口集合 (CW_min ... CW_max)
 CW_SET = [4, 8, 16, 32]   # 对应动作中的 W
-# CCA 阈值集合 (dBm) fixme: CCA阈值设置
+# CCA 阈值集合 (dBm)
 TH_LOW = -85.0    # 敏感 (Hidden Terminal)
-TH_MID = -75.0    # 默认
-TH_HIGH = -65.0   # 激进 (Exposed Terminal)
+TH_MID = -70.0    # 默认
+TH_HIGH = -50.0   # 激进 (Exposed Terminal)
 TH_SET = [TH_LOW, TH_MID, TH_HIGH]
 
 # 最大的物理侦听时间限制
@@ -41,7 +41,7 @@ SLOT_DURATION = T_MAX_SENSE + DATA_TIME + GUARD_TIME + ACK_TIME
 # 信号参数
 TX_POWER_DBM = 20.0
 NOISE_FLOOR_DBM = -90.0 # 底噪
-SINR_THRESHOLD_DB = 10.0
+SINR_THRESHOLD_DB = 3.0
 PATH_LOSS_EXPONENT = 3.5
 
 # ===========================
@@ -49,14 +49,14 @@ PATH_LOSS_EXPONENT = 3.5
 # ===========================
 LAMBDA_POISSON = 0.2
 MAX_QUEUE_SIZE = 50
-NUM_FRAMES = 500
+NUM_FRAMES = 3000
 SLOTS_PER_FRAME = 20
 BATCH_SIZE = 64
 LR = 5e-4
 GAMMA_RL = 0.9
 EPSILON_START = 1.0
-EPSILON_END = 0.05
-EPSILON_DECAY = 5000
+EPSILON_END = 0.01
+EPSILON_DECAY = 2000
 MEMORY_SIZE = 10000
 TARGET_UPDATE = 10
 
@@ -70,7 +70,7 @@ BETA = 0.5        # 信道质量激励 (1 - P_coll) 的系数
 GAMMA_COOP = 0.5  # 每侦听到一个 ACK 的奖励
 
 # 状态维度: Queue(3) + History(3) + I_obs(1) + P_coll_obs(1) = 8
-MAX_NEIGHBORS = 3
+MAX_NEIGHBORS = 4
 STATE_DIM = MAX_NEIGHBORS + MAX_NEIGHBORS + 2
 # 动作维度: Target(3) * W(4) * Th(3) = 36
 ACTION_DIM = MAX_NEIGHBORS * len(CW_SET) * len(TH_SET)

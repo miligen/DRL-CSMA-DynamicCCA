@@ -42,7 +42,7 @@ class Node:
         for other in all_nodes:
             if other.id != self.id:
                 dist = get_distance(self.pos, other.pos)
-                if dist <= DISTANCE * 1.5:
+                if dist <= INTERFERENCE_RANGE:
                     self.neighbors.append(other.id)
                     self.local_queues[other.id] = 0
                     self.history_status[other.id] = 0
@@ -51,7 +51,7 @@ class Node:
         for n_id in self.neighbors:
             new_pkts = np.random.poisson(LAMBDA_POISSON)
             self.local_queues[n_id] = min(self.local_queues[n_id] + new_pkts, MAX_QUEUE_SIZE)
-            self.local_queues[n_id] = 50 # fixme:先不考虑流量生成进行排查已有逻辑
+            self.local_queues[n_id] = 50 # TODO: 当前流量生成逻辑需要修改，先不考虑流量生成进行排查已有逻辑
 
     def get_state_vector(self):
         # 1. 队列 (归一化)
@@ -80,3 +80,24 @@ class Node:
         self.obs_busy_slots = 0
         self.obs_total_slots = 0
         self.obs_overheard_acks = 0
+
+    def reset_for_new_frame(self):
+        """在每一帧开始时调用，重置 MAC 协议状态，使其独立于上一帧"""
+        self.status = 'IDLE'  # 强制回到空闲状态
+        self.backoff_counter = 0  # 清除剩余的退避倒数
+
+        # 清除决策相关的临时变量
+        self.current_action_idx = 0
+        self.decision_state = None
+        self.target_id = None
+        self.chosen_th_watt = 0.0
+
+        # 清除传输结果标记
+        self.tx_start_time = -1
+        self.ack_received = False
+
+        # 清除本轮观测统计
+        self.reset_stats_for_new_action()
+
+        # 历史记录(上一次发给了谁、成功没)跨帧清零
+        self.history_status = {n: 0 for n in self.neighbors}
