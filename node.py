@@ -1,5 +1,5 @@
-# node.py
 import numpy as np
+from collections import deque
 from config import *
 from models import DQNAgent
 
@@ -8,96 +8,40 @@ class Node:
     def __init__(self, node_id, pos):
         self.id = node_id
         self.pos = pos
-        self.neighbors = []
-
-        # 每个节点拥有自己独立的 Agent
+        self.neighbors = []  # 实际可选的邻居 (最多 MAX_NEIGHBORS 个)
         self.agent = DQNAgent(node_id)
 
-        # 队列与历史
-        self.local_queues = {}
-        self.history_status = {}
+        self.status = 'IDLE'
 
-        # 状态机变量
-        self.status = 'IDLE'  # IDLE, BACKOFF, TX
-
-        # 退避相关
         self.backoff_counter = 0
         self.chosen_th_watt = 0.0
         self.current_action_idx = 0
         self.decision_state = None
         self.target_id = None
 
-        # 统计观测
-        self.obs_accum_interference = 0.0
-        self.obs_busy_slots = 0
-        self.obs_total_slots = 0
-        self.obs_overheard_acks = 0 # 统计侦听到的 ACK 数量
-
-        # 结果标记
-        self.tx_start_time = -1
-        self.ack_received = False
+        self.sense_history = deque([0.0] * K_SENSE_HISTORY, maxlen=K_SENSE_HISTORY)
 
     def init_neighbors(self, all_nodes):
         from utils import get_distance
+        distances = []
         for other in all_nodes:
             if other.id != self.id:
                 dist = get_distance(self.pos, other.pos)
-                if dist <= INTERFERENCE_RANGE:
-                    self.neighbors.append(other.id)
-                    self.local_queues[other.id] = 0
-                    self.history_status[other.id] = 0
+                if dist <= COMMUNICATION_RANGE:
+                    distances.append((dist, other.id))
 
-    def generate_traffic(self):
-        for n_id in self.neighbors:
-            new_pkts = np.random.poisson(LAMBDA_POISSON)
-            self.local_queues[n_id] = min(self.local_queues[n_id] + new_pkts, MAX_QUEUE_SIZE)
-            self.local_queues[n_id] = 50 # TODO: 当前流量生成逻辑需要修改，先不考虑流量生成进行排查已有逻辑
+        # 按距离排序，选取最近的 MAX_NEIGHBORS 个作为可选通信目标
+        distances.sort()
+        self.neighbors = [n_id for d, n_id in distances[:MAX_NEIGHBORS]]
 
     def get_state_vector(self):
-        # 1. 队列 (归一化)
-        q_vec = [self.local_queues.get(n, 0) / MAX_QUEUE_SIZE for n in self.neighbors]
-        q_vec += [0] * (MAX_NEIGHBORS - len(q_vec))
-
-        # 2. 历史状态 (+1, 0, -1) 无数据、或者初始时、或不存在邻居状态为0
-        h_vec = [self.history_status.get(n, 0) for n in self.neighbors]
-        h_vec += [0] * (MAX_NEIGHBORS - len(h_vec))
-
-        # 3. 退避过程中的平均干扰强度 4.退避过程中有干扰的时隙占比（冲突概率）
-        if self.obs_total_slots > 0:
-            avg_i = self.obs_accum_interference / self.obs_total_slots
-            p_coll = self.obs_busy_slots / self.obs_total_slots
-        else:
-            avg_i = 0.0
-            p_coll = 0.0
-
-        from utils import quantize_rssi
-        stat_vec = [quantize_rssi(avg_i), p_coll]
-
-        return np.array(q_vec + h_vec + stat_vec, dtype=np.float32)
-
-    def reset_stats_for_new_action(self):
-        self.obs_accum_interference = 0.0
-        self.obs_busy_slots = 0
-        self.obs_total_slots = 0
-        self.obs_overheard_acks = 0
+        return np.array(self.sense_history, dtype=np.float32)
 
     def reset_for_new_frame(self):
-        """在每一帧开始时调用，重置 MAC 协议状态，使其独立于上一帧"""
-        self.status = 'IDLE'  # 强制回到空闲状态
-        self.backoff_counter = 0  # 清除剩余的退避倒数
-
-        # 清除决策相关的临时变量
+        self.status = 'IDLE'
+        self.backoff_counter = 0
         self.current_action_idx = 0
         self.decision_state = None
         self.target_id = None
         self.chosen_th_watt = 0.0
-
-        # 清除传输结果标记
-        self.tx_start_time = -1
-        self.ack_received = False
-
-        # 清除本轮观测统计
-        self.reset_stats_for_new_action()
-
-        # 历史记录(上一次发给了谁、成功没)跨帧清零
-        self.history_status = {n: 0 for n in self.neighbors}
+        self.sense_history.extend([0.0] * K_SENSE_HISTORY)

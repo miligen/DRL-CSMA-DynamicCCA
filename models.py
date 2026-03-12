@@ -1,43 +1,35 @@
-# models.py
 import random
 from collections import deque
-
 import numpy as np
+import torch
 import torch.nn as nn
 import torch.optim as optim
-
 from config import *
-
 
 class DQN(nn.Module):
     def __init__(self, input_dim, output_dim):
         super(DQN, self).__init__()
-        self.fc1 = nn.Linear(input_dim, 128)
-        self.fc2 = nn.Linear(128, 128)
-        self.fc3 = nn.Linear(128, output_dim)
+        self.fc1 = nn.Linear(input_dim, 64)
+        self.fc2 = nn.Linear(64, 64)
+        self.fc3 = nn.Linear(64, output_dim)
 
     def forward(self, x):
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
         return self.fc3(x)
 
-
 class ReplayBuffer:
     def __init__(self, capacity):
         self.buffer = deque(maxlen=capacity)
-
     def push(self, state, action, reward, next_state, done):
         self.buffer.append((state, action, reward, next_state, done))
-
     def sample(self, batch_size):
         return random.sample(self.buffer, batch_size)
-
     def __len__(self): return len(self.buffer)
-
 
 class DQNAgent:
     def __init__(self, node_id):
-        self.node_id = node_id  # 仅用于调试区分
+        self.node_id = node_id
         self.policy_net = DQN(STATE_DIM, ACTION_DIM).to(DEVICE)
         self.target_net = DQN(STATE_DIM, ACTION_DIM).to(DEVICE)
         self.target_net.load_state_dict(self.policy_net.state_dict())
@@ -55,14 +47,12 @@ class DQNAgent:
             with torch.no_grad():
                 state_t = torch.FloatTensor(state).unsqueeze(0).to(DEVICE)
                 q_vals = self.policy_net(state_t)
-
                 mask_t = torch.BoolTensor(valid_mask).to(DEVICE).unsqueeze(0)
-                q_vals[~mask_t] = -1e9 # 将 mask 为 False (非法) 的位置的 Q 值设为负无穷 (-1e9)
-
+                q_vals[~mask_t] = -1e9
                 return q_vals.max(1)[1].item()
         else:
             valid_indices = [i for i, x in enumerate(valid_mask) if x]
-            if not valid_indices: return 0  # Fallback
+            if not valid_indices: return 0
             return random.choice(valid_indices)
 
     def update(self):

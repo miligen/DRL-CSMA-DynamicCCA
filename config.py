@@ -1,5 +1,5 @@
-# config.py
 import torch
+import numpy as np
 
 # ===========================
 # 1. 基础设置
@@ -8,69 +8,59 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 SEED = 42
 
 # ===========================
-# 2. 网络拓扑
+# 2. 网络拓扑与泊松点过程 (PPP)
 # ===========================
-NUM_NODES = 4
-DISTANCE = 50.0
-INTERFERENCE_RANGE = 90.0
+AREA_SIZE = 100.0          # 区域大小 100m x 100m
+LAMBDA_U = 0.002           # 用户密度 (预计 20 个节点)
+COMMUNICATION_RANGE = 40.0 # 最大物理通信距离
 
 # ===========================
 # 3. 物理层 & 时隙结构
 # ===========================
-# 时间单位: 秒
 MICRO_SLOT_TIME = 20e-6   # 20us
 DATA_TIME = 1e-3          # 1ms
-ACK_TIME = 100e-6         # 100us
-GUARD_TIME = 10e-6
 
-# 动作空间参数
-# 竞争窗口集合 (CW_min ... CW_max)
-CW_SET = [4, 8, 16, 32]   # 对应动作中的 W
-# CCA 阈值集合 (dBm)
-TH_LOW = -85.0    # 敏感 (Hidden Terminal)
-TH_MID = -70.0    # 默认
-TH_HIGH = -50.0   # 激进 (Exposed Terminal)
-TH_SET = [TH_LOW, TH_MID, TH_HIGH]
+FIXED_CW = 15
 
-# 最大的物理侦听时间限制
-W_MAX_PHYSICAL = max(CW_SET)
-T_MAX_SENSE = W_MAX_PHYSICAL * MICRO_SLOT_TIME
+# 【修改1】扩大 CCA 阈值范围：-82 到 -10，均匀切分为 30 个值
+TH_SET = list(np.linspace(-82.0, -10.0, 15))
 
-SLOT_DURATION = T_MAX_SENSE + DATA_TIME + GUARD_TIME + ACK_TIME
+T_MAX_SENSE = FIXED_CW * MICRO_SLOT_TIME
+SLOT_DURATION = T_MAX_SENSE + DATA_TIME
 
-# 信号参数
-TX_POWER_DBM = 20.0
-NOISE_FLOOR_DBM = -90.0 # 底噪
+TX_POWER_DBM = 15.0
+NOISE_FLOOR_DBM = -90.0
 SINR_THRESHOLD_DB = 3.0
-PATH_LOSS_EXPONENT = 3.5
+# 【修复2】修改路径损耗指数为典型的城市场景 3.0
+PATH_LOSS_EXPONENT = 3.0
+# 【修复3】增加 1米处的参考损耗 (Reference Loss)
+REFERENCE_LOSS = 40.0
 
 # ===========================
-# 4. 流量与训练
+# 4. 状态与动作维度
 # ===========================
-LAMBDA_POISSON = 0.2
-MAX_QUEUE_SIZE = 50
-NUM_FRAMES = 3000
-SLOTS_PER_FRAME = 20
-BATCH_SIZE = 64
-LR = 5e-4
-GAMMA_RL = 0.9
+K_SENSE_HISTORY = 10
+MAX_NEIGHBORS = 5
+
+STATE_DIM = K_SENSE_HISTORY
+ACTION_DIM = MAX_NEIGHBORS * len(TH_SET)
+
+# ===========================
+# 5. 训练与统计参数
+# ===========================
+# 【修改3】不再使用 NUM_FRAMES，改为总时隙数和统计间隔
+TOTAL_SLOTS = 20000       # 总运行时隙数 (相当于原来的 3000帧 * 20)
+STATS_INTERVAL = 20       # 每 20 个时隙统计一次利用率和奖励
+
+LR = 3e-4
+GAMMA_RL = 0.95
 EPSILON_START = 1.0
-EPSILON_END = 0.01
-EPSILON_DECAY = 2000
-MEMORY_SIZE = 10000
-TARGET_UPDATE = 10
+EPSILON_END = 0.001
+EPSILON_DECAY = 5000      # 衰减步数，基于 Agent 做出决策的次数
 
-# ===========================
-# 5. 奖励参数 (Risk-Sensitive)
-# ===========================
-ALPHA = 1.0       # 发送基础分
-LAMBDA_RS = 2.0   # 暴露终端激励
-DELTA_PENALTY = 2.0 # 鲁莽惩罚
-BETA = 0.5        # 信道质量激励 (1 - P_coll) 的系数
-GAMMA_COOP = 0.5  # 每侦听到一个 ACK 的奖励
+BATCH_SIZE = 32
+MEMORY_SIZE = int(TOTAL_SLOTS / 6)
+TARGET_UPDATE = 100       # 每 100 个统计间隔 (即2000个时隙) 更新一次目标网络
 
-# 状态维度: Queue(3) + History(3) + I_obs(1) + P_coll_obs(1) = 8
-MAX_NEIGHBORS = 4
-STATE_DIM = MAX_NEIGHBORS + MAX_NEIGHBORS + 2
-# 动作维度: Target(3) * W(4) * Th(3) = 36
-ACTION_DIM = MAX_NEIGHBORS * len(CW_SET) * len(TH_SET)
+REWARD_SUCCESS = 1.0
+REWARD_FAIL = -1.0
