@@ -11,7 +11,7 @@ SEED = 42
 # 2. 网络拓扑与泊松点过程 (PPP)
 # ===========================
 AREA_SIZE = 100.0          # 区域大小 100m x 100m
-LAMBDA_U = 0.002           # 用户密度 (预计 20 个节点)
+LAMBDA_U = 0.004           # 用户密度 (预计 20 个节点)
 COMMUNICATION_RANGE = 40.0 # 最大物理通信距离
 
 # ===========================
@@ -49,7 +49,7 @@ ACTION_DIM = MAX_NEIGHBORS * len(TH_SET)
 # 5. 训练与统计参数
 # ===========================
 # 【修改3】不再使用 NUM_FRAMES，改为总时隙数和统计间隔
-TOTAL_SLOTS = 20000       # 总运行时隙数 (相当于原来的 3000帧 * 20)
+TOTAL_SLOTS = 60000       # 总运行时隙数 (相当于原来的 3000帧 * 20)
 STATS_INTERVAL = 20       # 每 20 个时隙统计一次利用率和奖励
 
 LR = 3e-4
@@ -59,7 +59,7 @@ EPSILON_END = 0.001
 EPSILON_DECAY = 5000      # 衰减步数，基于 Agent 做出决策的次数
 
 BATCH_SIZE = 32
-MEMORY_SIZE = int(TOTAL_SLOTS / 6)
+MEMORY_SIZE = int(TOTAL_SLOTS / 5)
 TARGET_UPDATE = 100       # 每 100 个统计间隔 (即2000个时隙) 更新一次目标网络
 
 REWARD_SUCCESS = 1.0
