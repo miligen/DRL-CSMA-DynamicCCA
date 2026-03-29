@@ -3,6 +3,7 @@ from config import *
 from utils import *
 from node import Node
 
+
 class AdHocEnv:
     def __init__(self):
         expected_nodes = LAMBDA_U * AREA_SIZE * AREA_SIZE
@@ -42,7 +43,6 @@ class AdHocEnv:
 
         target_id = node.neighbors[n_idx]
         th_val = TH_SET[th_idx]
-        # 【修改】额外返回邻居索引，用于精确更新该链路的质量
         return target_id, th_val, n_idx
 
     def calculate_interference(self, rx_node, tx_nodes):
@@ -67,7 +67,7 @@ class AdHocEnv:
                 node.decision_state = state
                 node.current_action_idx = action_idx
                 node.target_id = target
-                node.target_n_idx = n_idx  # 记录正在通信的链路索引
+                node.target_n_idx = n_idx
                 node.chosen_th_watt = dbm_to_watt(th_dbm)
 
                 node.backoff_counter = np.random.randint(0, FIXED_CW + 1)
@@ -114,14 +114,35 @@ class AdHocEnv:
                 if sinr >= SINR_THRESHOLD_DB:
                     is_success = True
 
-            # 4. 奖励分配
-            reward = REWARD_SUCCESS if is_success else REWARD_FAIL
+            # ==========================================
+            # 【核心优化 4】自适应暴露终端奖励/惩罚机制
+            # ==========================================
+            # 获取 tx 发送时，本地天线承受的其他节点的干扰叠加值
+            tx_local_watt = self.calculate_interference(tx, tx_nodes)
+            tx_local_dbm = watt_to_dbm(tx_local_watt)
+
+            BASELINE_CCA = -82.0
+            MAX_CCA = -10.0
+
+            # 计算激进指数 k (0.0 到 1.0 之间)
+            k_aggressiveness = 0.0
+            if tx_local_dbm > BASELINE_CCA:
+                k_aggressiveness = (min(tx_local_dbm, MAX_CCA) - BASELINE_CCA) / (MAX_CCA - BASELINE_CCA)
+
+            ALPHA_BONUS = 1.0  # 成功克服强干扰的最大额外奖励
+            BETA_PENALTY = 1.0  # 强行发送失败的最大额外惩罚
+
+            if is_success:
+                reward = REWARD_SUCCESS + ALPHA_BONUS * k_aggressiveness
+                total_success += 1
+            else:
+                reward = REWARD_FAIL - BETA_PENALTY * k_aggressiveness
+            # ==========================================
+
             total_step_reward += reward
             num_updated_nodes += 1
-            if is_success:
-                total_success += 1
 
-            # 【核心修改】触发该目的链路的历史通信质量更新
+            # 触发该目的链路的历史通信质量更新
             tx.update_link_quality(tx.target_n_idx, is_success)
 
             # 获取包含更新后链路质量矩阵的新状态
@@ -133,4 +154,5 @@ class AdHocEnv:
             tx.status = 'IDLE'
 
         avg_reward = total_step_reward / num_updated_nodes if num_updated_nodes > 0 else 0.0
-        return total_success, avg_reward
+        # 【修改返回值】增加 num_updated_nodes 作为尝试次数返回
+        return total_success, avg_reward, num_updated_nodes
