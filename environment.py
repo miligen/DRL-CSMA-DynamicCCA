@@ -4,13 +4,16 @@ from utils import *
 from node import Node
 
 class AdHocEnv:
-    def __init__(self):
+    def __init__(self, use_link_quality=True):
         expected_nodes = LAMBDA_U * AREA_SIZE * AREA_SIZE
         self.num_nodes = np.random.poisson(expected_nodes)
         self.num_nodes = max(self.num_nodes, 2)
 
         xs = np.random.uniform(0, AREA_SIZE, self.num_nodes)
         ys = np.random.uniform(0, AREA_SIZE, self.num_nodes)
+
+        # 【修改】将 use_link_quality 传给每个 Node
+        self.nodes = [Node(i, (xs[i], ys[i]), use_link_quality) for i in range(self.num_nodes)]
 
         self.nodes = [Node(i, (xs[i], ys[i])) for i in range(self.num_nodes)]
         for node in self.nodes:
@@ -133,4 +136,4 @@ class AdHocEnv:
             tx.status = 'IDLE'
 
         avg_reward = total_step_reward / num_updated_nodes if num_updated_nodes > 0 else 0.0
-        return total_success, avg_reward
+        return total_success, avg_reward, num_updated_nodes

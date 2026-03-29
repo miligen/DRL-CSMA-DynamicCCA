@@ -28,10 +28,15 @@ class ReplayBuffer:
     def __len__(self): return len(self.buffer)
 
 class DQNAgent:
-    def __init__(self, node_id):
+    # 【修改】增加 use_link_quality 参数
+    def __init__(self, node_id, use_link_quality=True):
         self.node_id = node_id
-        self.policy_net = DQN(STATE_DIM, ACTION_DIM).to(DEVICE)
-        self.target_net = DQN(STATE_DIM, ACTION_DIM).to(DEVICE)
+
+        # 【新增】根据是否启用链路质量矩阵，动态决定神经网络的输入维度
+        actual_state_dim = STATE_DIM if use_link_quality else K_SENSE_HISTORY
+
+        self.policy_net = DQN(actual_state_dim, ACTION_DIM).to(DEVICE)
+        self.target_net = DQN(actual_state_dim, ACTION_DIM).to(DEVICE)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=LR)

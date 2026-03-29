@@ -5,11 +5,14 @@ from models import DQNAgent
 
 
 class Node:
-    def __init__(self, node_id, pos):
+    # 【修改】增加 use_link_quality 参数
+    def __init__(self, node_id, pos, use_link_quality=True):
         self.id = node_id
         self.pos = pos
         self.neighbors = []
-        self.agent = DQNAgent(node_id)
+
+        self.use_link_quality = use_link_quality  # 【新增】记录开关状态
+        self.agent = DQNAgent(node_id, use_link_quality)  # 【修改】将开关传给 Agent
 
         self.status = 'IDLE'
 
@@ -40,10 +43,13 @@ class Node:
         self.neighbors = [n_id for d, n_id in distances[:MAX_NEIGHBORS]]
 
     def get_state_vector(self):
-        # 【核心修改】将干扰历史和链路质量矩阵拼接为完整状态
+        # 【修改】根据开关决定是否拼接链路质量矩阵
         state_sense = np.array(self.sense_history, dtype=np.float32)
-        state_link = np.array(self.link_quality, dtype=np.float32)
-        return np.concatenate((state_sense, state_link))
+        if self.use_link_quality:
+            state_link = np.array(self.link_quality, dtype=np.float32)
+            return np.concatenate((state_sense, state_link))
+        else:
+            return state_sense
 
     def update_link_quality(self, n_idx, is_success):
         """【新增】使用指数移动平均 (EMA) 更新目标链路的历史成功率"""
