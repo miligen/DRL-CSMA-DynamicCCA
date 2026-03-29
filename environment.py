@@ -5,7 +5,10 @@ from node import Node
 
 
 class AdHocEnv:
-    def __init__(self):
+    # 【修改 1】增加 use_adaptive_reward 开关，默认为 True
+    def __init__(self, use_adaptive_reward=True):
+        self.use_adaptive_reward = use_adaptive_reward  # 记录开关状态
+
         expected_nodes = LAMBDA_U * AREA_SIZE * AREA_SIZE
         self.num_nodes = np.random.poisson(expected_nodes)
         self.num_nodes = max(self.num_nodes, 2)
@@ -115,37 +118,42 @@ class AdHocEnv:
                     is_success = True
 
             # ==========================================
-            # 【核心优化 4】自适应暴露终端奖励/惩罚机制
+            # 【修改 2】根据开关决定使用哪种奖励结算方式
             # ==========================================
-            # 获取 tx 发送时，本地天线承受的其他节点的干扰叠加值
-            tx_local_watt = self.calculate_interference(tx, tx_nodes)
-            tx_local_dbm = watt_to_dbm(tx_local_watt)
+            if self.use_adaptive_reward:
+                # 开启了自适应暴露终端奖惩机制
+                tx_local_watt = self.calculate_interference(tx, tx_nodes)
+                tx_local_dbm = watt_to_dbm(tx_local_watt)
 
-            BASELINE_CCA = -82.0
-            MAX_CCA = -10.0
+                BASELINE_CCA = -82.0
+                MAX_CCA = -10.0
 
-            # 计算激进指数 k (0.0 到 1.0 之间)
-            k_aggressiveness = 0.0
-            if tx_local_dbm > BASELINE_CCA:
-                k_aggressiveness = (min(tx_local_dbm, MAX_CCA) - BASELINE_CCA) / (MAX_CCA - BASELINE_CCA)
+                k_aggressiveness = 0.0
+                if tx_local_dbm > BASELINE_CCA:
+                    k_aggressiveness = (min(tx_local_dbm, MAX_CCA) - BASELINE_CCA) / (MAX_CCA - BASELINE_CCA)
 
-            ALPHA_BONUS = 1.0  # 成功克服强干扰的最大额外奖励
-            BETA_PENALTY = 1.0  # 强行发送失败的最大额外惩罚
+                ALPHA_BONUS = 1.0
+                BETA_PENALTY = 1.0
 
-            if is_success:
-                reward = REWARD_SUCCESS + ALPHA_BONUS * k_aggressiveness
-                total_success += 1
+                if is_success:
+                    reward = REWARD_SUCCESS + ALPHA_BONUS * k_aggressiveness
+                    total_success += 1
+                else:
+                    reward = REWARD_FAIL - BETA_PENALTY * k_aggressiveness
             else:
-                reward = REWARD_FAIL - BETA_PENALTY * k_aggressiveness
+                # 关闭，使用传统的固定 +1 / -1 奖励
+                if is_success:
+                    reward = REWARD_SUCCESS
+                    total_success += 1
+                else:
+                    reward = REWARD_FAIL
             # ==========================================
 
             total_step_reward += reward
             num_updated_nodes += 1
 
-            # 触发该目的链路的历史通信质量更新
             tx.update_link_quality(tx.target_n_idx, is_success)
 
-            # 获取包含更新后链路质量矩阵的新状态
             next_state = tx.get_state_vector()
             tx.agent.memory.push(tx.decision_state, tx.current_action_idx,
                                  reward, next_state, False)
@@ -154,5 +162,4 @@ class AdHocEnv:
             tx.status = 'IDLE'
 
         avg_reward = total_step_reward / num_updated_nodes if num_updated_nodes > 0 else 0.0
-        # 【修改返回值】增加 num_updated_nodes 作为尝试次数返回
         return total_success, avg_reward, num_updated_nodes

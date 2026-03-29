@@ -11,7 +11,7 @@ SEED = 42
 # 2. 网络拓扑与泊松点过程 (PPP)
 # ===========================
 AREA_SIZE = 100.0
-LAMBDA_U = 0.004
+LAMBDA_U = 0.002
 COMMUNICATION_RANGE = 40.0
 
 # ===========================
@@ -45,7 +45,7 @@ ACTION_DIM = MAX_NEIGHBORS * len(TH_SET)
 # ===========================
 # 5. 训练与统计参数
 # ===========================
-TOTAL_SLOTS = 60000
+TOTAL_SLOTS = 100000
 STATS_INTERVAL = 20       # 每 20 个时隙统计一次利用率和奖励
 
 LR = 3e-4
