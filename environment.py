@@ -5,7 +5,10 @@ from node import Node
 
 
 class AdHocEnv:
-    def __init__(self):
+    # 【加入开关】
+    def __init__(self, use_adaptive_reward=True):
+        self.use_adaptive_reward = use_adaptive_reward
+
         expected_nodes = LAMBDA_U * AREA_SIZE * AREA_SIZE
         self.num_nodes = np.random.poisson(expected_nodes)
         self.num_nodes = max(self.num_nodes, 2)
@@ -39,7 +42,6 @@ class AdHocEnv:
         return target_id, rs_val, n_idx
 
     def get_min_tx_distance(self, target_node, tx_nodes):
-        """【核心重构】计算距离目标节点最近的发送源距离"""
         min_dist = float('inf')
         for tx in tx_nodes:
             if tx.id == target_node.id: continue
@@ -63,7 +65,7 @@ class AdHocEnv:
                 node.current_action_idx = action_idx
                 node.target_id = target
                 node.target_n_idx = n_idx
-                node.chosen_rs = rs_val  # 设定感知半径
+                node.chosen_rs = rs_val
 
                 node.backoff_counter = np.random.randint(0, FIXED_CW + 1)
                 node.status = 'BACKOFF'
@@ -77,10 +79,8 @@ class AdHocEnv:
             for node in self.nodes:
                 if node.status == 'BACKOFF':
                     d_min = self.get_min_tx_distance(node, snapshot_emitters)
-                    # 将距离转化为神经网络认识的 [0,1] 干扰强度
                     node.sense_history.append(normalize_interference_dist(d_min))
 
-                    # 【布尔判定】如果最近的发送者在我的感知半径内，信道忙碌
                     is_busy = d_min < node.chosen_rs
                     if not is_busy:
                         node.backoff_counter -= 1
@@ -101,33 +101,34 @@ class AdHocEnv:
         for tx in tx_nodes:
             rx = self.nodes[tx.target_id]
 
-            # 【布尔碰撞判定】rx 除 tx 以外，距离最近的其他发送源
             rx_d_min = self.get_min_tx_distance(rx, tx_nodes)
-
-            # 如果接收方没在发数据，且其他干扰源都在通信距离 Rc 之外，则接收成功！
             is_success = (rx.status != 'TX') and (rx_d_min > COMMUNICATION_RANGE)
 
             # ==========================================
-            # 【等效重构】基于距离的暴露终端奖励/惩罚机制
+            # 【核心逻辑】根据开关分支结算奖励
             # ==========================================
-            tx_d_min = self.get_min_tx_distance(tx, tx_nodes)
+            if self.use_adaptive_reward:
+                tx_d_min = self.get_min_tx_distance(tx, tx_nodes)
+                k_aggressiveness = 0.0
+                if tx_d_min < 2.0 * COMMUNICATION_RANGE:
+                    clamped_d = max(tx_d_min, MIN_SENSE_RANGE)
+                    k_aggressiveness = (2.0 * COMMUNICATION_RANGE - clamped_d) / (
+                                2.0 * COMMUNICATION_RANGE - MIN_SENSE_RANGE)
 
-            # 如果距离最近的活跃节点在 2*Rc 以内，说明 tx 顶着干扰强行发送了
-            k_aggressiveness = 0.0
-            if tx_d_min < 2.0 * COMMUNICATION_RANGE:
-                # 距离越近，激进指数越大 (最大为 1.0)
-                clamped_d = max(tx_d_min, MIN_SENSE_RANGE)
-                k_aggressiveness = (2.0 * COMMUNICATION_RANGE - clamped_d) / (
-                            2.0 * COMMUNICATION_RANGE - MIN_SENSE_RANGE)
+                ALPHA_BONUS = 1.0
+                BETA_PENALTY = 1.0
 
-            ALPHA_BONUS = 1.0
-            BETA_PENALTY = 1.0
-
-            if is_success:
-                reward = REWARD_SUCCESS + ALPHA_BONUS * k_aggressiveness
-                total_success += 1
+                if is_success:
+                    reward = REWARD_SUCCESS + ALPHA_BONUS * k_aggressiveness
+                    total_success += 1
+                else:
+                    reward = REWARD_FAIL - BETA_PENALTY * k_aggressiveness
             else:
-                reward = REWARD_FAIL - BETA_PENALTY * k_aggressiveness
+                if is_success:
+                    reward = REWARD_SUCCESS
+                    total_success += 1
+                else:
+                    reward = REWARD_FAIL
             # ==========================================
 
             total_step_reward += reward
