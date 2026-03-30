@@ -7,6 +7,7 @@ from datetime import datetime
 
 from config import *
 from environment import AdHocEnv
+from utils import get_distance
 
 try:
     matplotlib.rcParams['font.sans-serif'] = ['SimHei']
@@ -15,6 +16,97 @@ except:
     pass
 
 
+# ========================================================
+# 直接将评估与画图函数内置，彻底消除 Import / NameError 依赖
+# ========================================================
+def estimate_optimal_throughput(env, iterations=2000):
+    """基于布尔距离模型的理论并发上限估算"""
+    all_links = []
+    for node in env.nodes:
+        for neighbor_id in node.neighbors:
+            all_links.append((node.id, neighbor_id))
+
+    max_concurrent = 0
+    best_set = []
+
+    for _ in range(iterations):
+        np.random.shuffle(all_links)
+        active_links = []
+        active_nodes = set()
+
+        for tx, rx in all_links:
+            if tx in active_nodes or rx in active_nodes:
+                continue
+            active_links.append((tx, rx))
+            valid = True
+
+            # 基于布尔距离的冲突判断
+            for active_tx, active_rx in active_links:
+                r_node = env.nodes[active_rx]
+                d_min = float('inf')
+                # 检查所有其他发送者到这个接收者的距离
+                for other_tx, _ in active_links:
+                    if other_tx != active_tx:
+                        d = get_distance(env.nodes[other_tx].pos, r_node.pos)
+                        if d < d_min: d_min = d
+
+                # 如果有任何其他发送者进入了通信半径 Rc，则产生干扰，组合失效
+                if d_min <= COMMUNICATION_RANGE:
+                    valid = False
+                    break
+
+            if valid:
+                active_nodes.add(tx)
+                active_nodes.add(rx)
+            else:
+                active_links.pop()
+
+        if len(active_links) > max_concurrent:
+            max_concurrent = len(active_links)
+            best_set = list(active_links)
+
+    return max_concurrent, best_set
+
+
+def plot_topology(env, run_id, optimal_links=None):
+    """绘制拓扑结构图"""
+    plt.figure(figsize=(8, 8))
+    for node in env.nodes:
+        for neighbor_id in node.neighbors:
+            neighbor = next(n for n in env.nodes if n.id == neighbor_id)
+            plt.plot([node.pos[0], neighbor.pos[0]],
+                     [node.pos[1], neighbor.pos[1]],
+                     color='gray', linestyle='--', alpha=0.3)
+    if optimal_links:
+        for idx, (tx, rx) in enumerate(optimal_links):
+            tx_node = env.nodes[tx]
+            rx_node = env.nodes[rx]
+            plt.plot([tx_node.pos[0], rx_node.pos[0]],
+                     [tx_node.pos[1], rx_node.pos[1]],
+                     color='red', linestyle='-', linewidth=3, alpha=0.8,
+                     label='理论最优并发链路' if idx == 0 else "")
+            plt.arrow(tx_node.pos[0], tx_node.pos[1],
+                      (rx_node.pos[0] - tx_node.pos[0]) * 0.8,
+                      (rx_node.pos[1] - tx_node.pos[1]) * 0.8,
+                      head_width=1.5, head_length=2, fc='red', ec='red', alpha=0.8)
+    for node in env.nodes:
+        plt.scatter(node.pos[0], node.pos[1], c='dodgerblue', s=120, edgecolors='black', zorder=5)
+        plt.text(node.pos[0] + 1.5, node.pos[1] + 1.5, str(node.id), fontsize=10, fontweight='bold', zorder=6)
+    plt.title(f"网络拓扑图 (节点数: {env.num_nodes})")
+    plt.xlabel("X (m)")
+    plt.ylabel("Y (m)")
+    plt.legend(loc='upper right')
+    plt.grid(True, linestyle=':', alpha=0.6)
+    plt.xlim(-5, AREA_SIZE + 5)
+    plt.ylim(-5, AREA_SIZE + 5)
+    filename = f"topology_{run_id}.png"
+    plt.savefig(filename, dpi=150)
+    plt.close()
+
+
+# ========================================================
+# 消融实验主体逻辑
+# ========================================================
 def set_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
