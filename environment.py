@@ -5,7 +5,9 @@ from node import Node
 
 
 class AdHocEnv:
-    def __init__(self):
+    def __init__(self, use_link_quality=True, use_altruistic_bonus=True):
+        self.use_link_quality = use_link_quality
+        self.use_altruistic_bonus = use_altruistic_bonus  # 记录开关状态
         expected_nodes = LAMBDA_U * AREA_SIZE * AREA_SIZE
         self.num_nodes = np.random.poisson(expected_nodes)
         self.num_nodes = max(self.num_nodes, 2)
@@ -145,16 +147,15 @@ class AdHocEnv:
             ALPHA_BONUS = 1.0
             BETA_PENALTY = 1.0
 
-            # --- B. 定义利他主义保护奖励系数 ---
-            ALTRUISTIC_BONUS = 0.5  # 每次侦听到邻居 ACK 获得的额外奖励
-
             if is_success:
                 reward = REWARD_SUCCESS + ALPHA_BONUS * k_aggressiveness
             else:
                 reward = REWARD_FAIL - BETA_PENALTY * k_aggressiveness
 
-            # --- C. 结算这段漫长等待期内累积的侦听 ACK 奖励 ---
-            reward += ALTRUISTIC_BONUS * tx.overheard_acks
+            # --- B & C. 根据消融开关决定是否发放利他奖励 ---
+            if self.use_altruistic_bonus:
+                ALTRUISTIC_BONUS = 0.5  # 每次侦听到邻居 ACK 获得的额外奖励
+                reward += ALTRUISTIC_BONUS * tx.overheard_acks
 
             total_step_reward += reward
             num_updated_nodes += 1
