@@ -17,41 +17,36 @@ class AdHocEnv:
         for node in self.nodes:
             node.init_neighbors(self.nodes)
 
-        self.gain_matrix = np.zeros((self.num_nodes, self.num_nodes))
-        for i in range(self.num_nodes):
-            for j in range(self.num_nodes):
-                if i != j:
-                    dist = get_distance(self.nodes[i].pos, self.nodes[j].pos)
-                    self.gain_matrix[i, j] = -calculate_path_loss(dist)
-
     def get_valid_mask(self, node):
         mask = [False] * ACTION_DIM
-        num_th = len(TH_SET)
+        num_rs = len(RS_SET)
         for i, n_id in enumerate(node.neighbors):
-            start = i * num_th
-            end = start + num_th
+            start = i * num_rs
+            end = start + num_rs
             for k in range(start, end): mask[k] = True
         return mask
 
     def decode_action(self, node, action_idx):
-        num_th = len(TH_SET)
-        th_idx = action_idx % num_th
-        n_idx = action_idx // num_th
+        num_rs = len(RS_SET)
+        rs_idx = action_idx % num_rs
+        n_idx = action_idx // num_rs
 
         if n_idx >= len(node.neighbors):
             n_idx = 0
 
         target_id = node.neighbors[n_idx]
-        th_val = TH_SET[th_idx]
-        return target_id, th_val, n_idx
+        rs_val = RS_SET[rs_idx]
+        return target_id, rs_val, n_idx
 
-    def calculate_interference(self, rx_node, tx_nodes):
-        i_watt = 0.0
+    def get_min_tx_distance(self, target_node, tx_nodes):
+        """【核心重构】计算距离目标节点最近的发送源距离"""
+        min_dist = float('inf')
         for tx in tx_nodes:
-            if tx.id == rx_node.id: continue
-            p_rx = dbm_to_watt(TX_POWER_DBM + self.gain_matrix[tx.id, rx_node.id])
-            i_watt += p_rx
-        return i_watt
+            if tx.id == target_node.id: continue
+            d = get_distance(tx.pos, target_node.pos)
+            if d < min_dist:
+                min_dist = d
+        return min_dist
 
     def run_slot(self):
         # === 1. 决策阶段 ===
@@ -62,18 +57,18 @@ class AdHocEnv:
 
                 state = node.get_state_vector()
                 action_idx = node.agent.select_action(state, mask)
-                target, th_dbm, n_idx = self.decode_action(node, action_idx)
+                target, rs_val, n_idx = self.decode_action(node, action_idx)
 
                 node.decision_state = state
                 node.current_action_idx = action_idx
                 node.target_id = target
                 node.target_n_idx = n_idx
-                node.chosen_th_watt = dbm_to_watt(th_dbm)
+                node.chosen_rs = rs_val  # 设定感知半径
 
                 node.backoff_counter = np.random.randint(0, FIXED_CW + 1)
                 node.status = 'BACKOFF'
 
-        # === 2. 微时隙步进 ===
+        # === 2. 微时隙步进 (布尔侦听) ===
         active_tx_nodes = []
         for t in range(FIXED_CW + 1):
             snapshot_emitters = [n for n in self.nodes if n.status == 'TX']
@@ -81,10 +76,12 @@ class AdHocEnv:
 
             for node in self.nodes:
                 if node.status == 'BACKOFF':
-                    i_watt = self.calculate_interference(node, snapshot_emitters)
-                    node.sense_history.append(quantize_rssi(i_watt))
+                    d_min = self.get_min_tx_distance(node, snapshot_emitters)
+                    # 将距离转化为神经网络认识的 [0,1] 干扰强度
+                    node.sense_history.append(normalize_interference_dist(d_min))
 
-                    is_busy = i_watt >= node.chosen_th_watt
+                    # 【布尔判定】如果最近的发送者在我的感知半径内，信道忙碌
+                    is_busy = d_min < node.chosen_rs
                     if not is_busy:
                         node.backoff_counter -= 1
 
@@ -95,7 +92,7 @@ class AdHocEnv:
                 node.status = 'TX'
                 active_tx_nodes.append(node)
 
-        # === 3. 上帝视角结算与学习 ===
+        # === 3. 上帝视角结算与学习 (布尔干涉模型) ===
         tx_nodes = [n for n in self.nodes if n.status == 'TX']
         total_success = 0
         total_step_reward = 0.0
@@ -104,33 +101,27 @@ class AdHocEnv:
         for tx in tx_nodes:
             rx = self.nodes[tx.target_id]
 
-            sig = dbm_to_watt(TX_POWER_DBM + self.gain_matrix[tx.id, rx.id])
-            intf = self.calculate_interference(rx, tx_nodes)
-            intf = max(0.0, intf - sig)
+            # 【布尔碰撞判定】rx 除 tx 以外，距离最近的其他发送源
+            rx_d_min = self.get_min_tx_distance(rx, tx_nodes)
 
-            is_success = False
-            if rx.status != 'TX':
-                sinr = calculate_sinr(sig, intf)
-                if sinr >= SINR_THRESHOLD_DB:
-                    is_success = True
+            # 如果接收方没在发数据，且其他干扰源都在通信距离 Rc 之外，则接收成功！
+            is_success = (rx.status != 'TX') and (rx_d_min > COMMUNICATION_RANGE)
 
             # ==========================================
-            # 【核心优化 4】自适应暴露终端奖励/惩罚机制
+            # 【等效重构】基于距离的暴露终端奖励/惩罚机制
             # ==========================================
-            # 获取 tx 发送时，本地天线承受的其他节点的干扰叠加值
-            tx_local_watt = self.calculate_interference(tx, tx_nodes)
-            tx_local_dbm = watt_to_dbm(tx_local_watt)
+            tx_d_min = self.get_min_tx_distance(tx, tx_nodes)
 
-            BASELINE_CCA = -82.0
-            MAX_CCA = -10.0
-
-            # 计算激进指数 k (0.0 到 1.0 之间)
+            # 如果距离最近的活跃节点在 2*Rc 以内，说明 tx 顶着干扰强行发送了
             k_aggressiveness = 0.0
-            if tx_local_dbm > BASELINE_CCA:
-                k_aggressiveness = (min(tx_local_dbm, MAX_CCA) - BASELINE_CCA) / (MAX_CCA - BASELINE_CCA)
+            if tx_d_min < 2.0 * COMMUNICATION_RANGE:
+                # 距离越近，激进指数越大 (最大为 1.0)
+                clamped_d = max(tx_d_min, MIN_SENSE_RANGE)
+                k_aggressiveness = (2.0 * COMMUNICATION_RANGE - clamped_d) / (
+                            2.0 * COMMUNICATION_RANGE - MIN_SENSE_RANGE)
 
-            ALPHA_BONUS = 1.0  # 成功克服强干扰的最大额外奖励
-            BETA_PENALTY = 1.0  # 强行发送失败的最大额外惩罚
+            ALPHA_BONUS = 1.0
+            BETA_PENALTY = 1.0
 
             if is_success:
                 reward = REWARD_SUCCESS + ALPHA_BONUS * k_aggressiveness
@@ -142,10 +133,8 @@ class AdHocEnv:
             total_step_reward += reward
             num_updated_nodes += 1
 
-            # 触发该目的链路的历史通信质量更新
             tx.update_link_quality(tx.target_n_idx, is_success)
 
-            # 获取包含更新后链路质量矩阵的新状态
             next_state = tx.get_state_vector()
             tx.agent.memory.push(tx.decision_state, tx.current_action_idx,
                                  reward, next_state, False)
@@ -154,5 +143,4 @@ class AdHocEnv:
             tx.status = 'IDLE'
 
         avg_reward = total_step_reward / num_updated_nodes if num_updated_nodes > 0 else 0.0
-        # 【修改返回值】增加 num_updated_nodes 作为尝试次数返回
         return total_success, avg_reward, num_updated_nodes
