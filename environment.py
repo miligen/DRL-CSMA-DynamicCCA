@@ -101,8 +101,11 @@ class AdHocEnv:
         for tx in tx_nodes:
             rx = self.nodes[tx.target_id]
 
-            # 【布尔碰撞判定】rx 除 tx 以外，距离最近的其他发送源
-            rx_d_min = self.get_min_tx_distance(rx, tx_nodes)
+            # ==========================================
+            # 【修复 BUG】剔除合法的发送者，只计算"其他"发送源带来的干扰
+            # ==========================================
+            interfering_tx_nodes = [n for n in tx_nodes if n.id != tx.id]
+            rx_d_min = self.get_min_tx_distance(rx, interfering_tx_nodes)
 
             # 如果接收方没在发数据，且其他干扰源都在通信距离 Rc 之外，则接收成功！
             is_success = (rx.status != 'TX') and (rx_d_min > COMMUNICATION_RANGE)
@@ -110,7 +113,7 @@ class AdHocEnv:
             # ==========================================
             # 【等效重构】基于距离的暴露终端奖励/惩罚机制
             # ==========================================
-            tx_d_min = self.get_min_tx_distance(tx, tx_nodes)
+            tx_d_min = self.get_min_tx_distance(tx, tx_nodes)  # 这里不用改，因为函数内部排除了自身
 
             # 如果距离最近的活跃节点在 2*Rc 以内，说明 tx 顶着干扰强行发送了
             k_aggressiveness = 0.0
