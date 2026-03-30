@@ -145,5 +145,5 @@ class AdHocEnv:
 
             tx.status = 'IDLE'
 
-        avg_reward = total_step_reward / num_updated_nodes if num_updated_nodes > 0 else 0.0
-        return total_success, avg_reward, num_updated_nodes
+        # avg_reward = total_step_reward / num_updated_nodes if num_updated_nodes > 0 else 0.0 # 把计算平均值的工作统一交给 main.py 即可
+        return total_success, total_step_reward, num_updated_nodes
