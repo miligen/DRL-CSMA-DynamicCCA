@@ -101,19 +101,27 @@ class AdHocEnv:
         for tx in tx_nodes:
             rx = self.nodes[tx.target_id]
 
-            rx_d_min = self.get_min_tx_distance(rx, tx_nodes)
+            # ==========================================
+            # 【修复 BUG】剔除合法的发送者，只计算"其他"发送源带来的干扰
+            # ==========================================
+            interfering_tx_nodes = [n for n in tx_nodes if n.id != tx.id]
+            rx_d_min = self.get_min_tx_distance(rx, interfering_tx_nodes)
+
+            # 如果接收方没在发数据，且其他干扰源都在通信距离 Rc 之外，则接收成功！
             is_success = (rx.status != 'TX') and (rx_d_min > COMMUNICATION_RANGE)
 
             # ==========================================
             # 【核心逻辑】根据开关分支结算奖励
             # ==========================================
-            if self.use_adaptive_reward:
-                tx_d_min = self.get_min_tx_distance(tx, tx_nodes)
-                k_aggressiveness = 0.0
-                if tx_d_min < 2.0 * COMMUNICATION_RANGE:
-                    clamped_d = max(tx_d_min, MIN_SENSE_RANGE)
-                    k_aggressiveness = (2.0 * COMMUNICATION_RANGE - clamped_d) / (
-                                2.0 * COMMUNICATION_RANGE - MIN_SENSE_RANGE)
+            tx_d_min = self.get_min_tx_distance(tx, tx_nodes)  # 这里不用改，因为函数内部排除了自身
+
+            # 如果距离最近的活跃节点在 2*Rc 以内，说明 tx 顶着干扰强行发送了
+            k_aggressiveness = 0.0
+            if tx_d_min < 2.0 * COMMUNICATION_RANGE:
+                # 距离越近，激进指数越大 (最大为 1.0)
+                clamped_d = max(tx_d_min, MIN_SENSE_RANGE)
+                k_aggressiveness = (2.0 * COMMUNICATION_RANGE - clamped_d) / (
+                            2.0 * COMMUNICATION_RANGE - MIN_SENSE_RANGE)
 
                 ALPHA_BONUS = 1.0
                 BETA_PENALTY = 1.0
