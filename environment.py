@@ -63,7 +63,7 @@ class AdHocEnv:
                 node.current_action_idx = action_idx
                 node.target_id = target
                 node.target_n_idx = n_idx
-                node.chosen_rs = rs_val  # 设定感知半径
+                node.chosen_rs = rs_val
 
                 node.backoff_counter = np.random.randint(0, FIXED_CW + 1)
                 node.status = 'BACKOFF'
@@ -77,10 +77,8 @@ class AdHocEnv:
             for node in self.nodes:
                 if node.status == 'BACKOFF':
                     d_min = self.get_min_tx_distance(node, snapshot_emitters)
-                    # 将距离转化为神经网络认识的 [0,1] 干扰强度
                     node.sense_history.append(normalize_interference_dist(d_min))
 
-                    # 【布尔判定】如果最近的发送者在我的感知半径内，信道忙碌
                     is_busy = d_min < node.chosen_rs
                     if not is_busy:
                         node.backoff_counter -= 1
@@ -98,27 +96,48 @@ class AdHocEnv:
         total_step_reward = 0.0
         num_updated_nodes = 0
 
+        # ==========================================
+        # 步骤 3.1: 提前评估所有当前 TX 节点的成功状态
+        # ==========================================
+        success_status = {}
+        successful_rx_ids = set()
+
         for tx in tx_nodes:
             rx = self.nodes[tx.target_id]
-
-            # ==========================================
-            # 【修复 BUG】剔除合法的发送者，只计算"其他"发送源带来的干扰
-            # ==========================================
             interfering_tx_nodes = [n for n in tx_nodes if n.id != tx.id]
             rx_d_min = self.get_min_tx_distance(rx, interfering_tx_nodes)
 
-            # 如果接收方没在发数据，且其他干扰源都在通信距离 Rc 之外，则接收成功！
             is_success = (rx.status != 'TX') and (rx_d_min > COMMUNICATION_RANGE)
+            success_status[tx.id] = is_success
 
-            # ==========================================
-            # 【等效重构】基于距离的暴露终端奖励/惩罚机制
-            # ==========================================
-            tx_d_min = self.get_min_tx_distance(tx, tx_nodes)  # 这里不用改，因为函数内部排除了自身
+            if is_success:
+                successful_rx_ids.add(rx.id)
 
-            # 如果距离最近的活跃节点在 2*Rc 以内，说明 tx 顶着干扰强行发送了
+        # ==========================================
+        # 步骤 3.2: 模拟侦听 ACK (累加利他避让奖励)
+        # ==========================================
+        # 对于所有正处于 BACKOFF 或本回合刚 TX 完毕的节点：
+        # 如果在它们"活跃"期间，有邻居接收成功了（且不是自己的目标），说明它的策略成功保护了邻居。
+        for node in self.nodes:
+            if node.status in ['BACKOFF', 'TX']:
+                for rx_id in successful_rx_ids:
+                    # 如果成功的接收者是我的邻居，且不是我当前正在发的目标
+                    if rx_id in node.neighbors and rx_id != node.target_id:
+                        node.overheard_acks += 1
+
+        # ==========================================
+        # 步骤 3.3: 发放综合奖励与 DQN 学习更新
+        # ==========================================
+        for tx in tx_nodes:
+            is_success = success_status[tx.id]
+
+            if is_success:
+                total_success += 1
+
+            # --- A. 计算基础奖惩与激进发送激励 ---
+            tx_d_min = self.get_min_tx_distance(tx, tx_nodes)
             k_aggressiveness = 0.0
             if tx_d_min < 2.0 * COMMUNICATION_RANGE:
-                # 距离越近，激进指数越大 (最大为 1.0)
                 clamped_d = max(tx_d_min, MIN_SENSE_RANGE)
                 k_aggressiveness = (2.0 * COMMUNICATION_RANGE - clamped_d) / (
                             2.0 * COMMUNICATION_RANGE - MIN_SENSE_RANGE)
@@ -126,24 +145,29 @@ class AdHocEnv:
             ALPHA_BONUS = 1.0
             BETA_PENALTY = 1.0
 
+            # --- B. 定义利他主义保护奖励系数 ---
+            ALTRUISTIC_BONUS = 0.5  # 每次侦听到邻居 ACK 获得的额外奖励
+
             if is_success:
                 reward = REWARD_SUCCESS + ALPHA_BONUS * k_aggressiveness
-                total_success += 1
             else:
                 reward = REWARD_FAIL - BETA_PENALTY * k_aggressiveness
-            # ==========================================
+
+            # --- C. 结算这段漫长等待期内累积的侦听 ACK 奖励 ---
+            reward += ALTRUISTIC_BONUS * tx.overheard_acks
 
             total_step_reward += reward
             num_updated_nodes += 1
 
+            # 状态与经验池更新
             tx.update_link_quality(tx.target_n_idx, is_success)
-
             next_state = tx.get_state_vector()
             tx.agent.memory.push(tx.decision_state, tx.current_action_idx,
                                  reward, next_state, False)
             tx.agent.update()
 
+            # 彻底完成当前回合，重置节点状态与利他计数器
             tx.status = 'IDLE'
+            tx.overheard_acks = 0
 
-        # avg_reward = total_step_reward / num_updated_nodes if num_updated_nodes > 0 else 0.0 # 把计算平均值的工作统一交给 main.py 即可
         return total_success, total_step_reward, num_updated_nodes

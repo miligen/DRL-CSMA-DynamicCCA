@@ -19,6 +19,9 @@ class Node:
         self.target_id = None
         self.target_n_idx = 0
 
+        # 【新增】利他主义侦听计数器：记录从决策到发送期间，侦听到的邻居成功 ACK 数量
+        self.overheard_acks = 0
+
         self.sense_history = deque([0.0] * K_SENSE_HISTORY, maxlen=K_SENSE_HISTORY)
         self.link_quality = [1.0] * MAX_NEIGHBORS
 
@@ -53,4 +56,5 @@ class Node:
         self.target_id = None
         self.target_n_idx = 0
         self.chosen_rs = 0.0
+        self.overheard_acks = 0  # 【新增】状态重置时清零
         self.sense_history.extend([0.0] * K_SENSE_HISTORY)
