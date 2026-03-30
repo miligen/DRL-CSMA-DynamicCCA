@@ -32,15 +32,19 @@ def estimate_optimal_throughput(env, iterations=2000):
                 continue
             active_links.append((tx, rx))
             valid = True
-            tx_nodes = [env.nodes[t] for t, _ in active_links]
 
+            # 【核心修改】基于布尔距离的冲突判断
             for active_tx, active_rx in active_links:
                 r_node = env.nodes[active_rx]
-                sig = dbm_to_watt(TX_POWER_DBM + env.gain_matrix[active_tx, active_rx])
-                intf = env.calculate_interference(r_node, tx_nodes)
-                intf = max(0.0, intf - sig)
+                d_min = float('inf')
+                # 检查所有其他发送者到这个接收者的距离
+                for other_tx, _ in active_links:
+                    if other_tx != active_tx:
+                        d = get_distance(env.nodes[other_tx].pos, r_node.pos)
+                        if d < d_min: d_min = d
 
-                if calculate_sinr(sig, intf) < SINR_THRESHOLD_DB:
+                # 如果有任何其他发送者进入了通信半径 Rc，则产生干扰，组合失效
+                if d_min <= COMMUNICATION_RANGE:
                     valid = False
                     break
 
