@@ -111,16 +111,16 @@ class AdHocEnv:
             is_success = (rx.status != 'TX') and (rx_d_min > COMMUNICATION_RANGE)
 
             # ==========================================
-            # 【核心逻辑】根据开关分支结算奖励
+            # 【核心逻辑】根据开关分支结算奖励 (加回消融开关)
             # ==========================================
-            tx_d_min = self.get_min_tx_distance(tx, tx_nodes)  # 这里不用改，因为函数内部排除了自身
+            if self.use_adaptive_reward:
+                # [开启自适应奖励]
+                tx_d_min = self.get_min_tx_distance(tx, tx_nodes)
 
-            # 如果距离最近的活跃节点在 2*Rc 以内，说明 tx 顶着干扰强行发送了
-            k_aggressiveness = 0.0
-            if tx_d_min < 2.0 * COMMUNICATION_RANGE:
-                # 距离越近，激进指数越大 (最大为 1.0)
-                clamped_d = max(tx_d_min, MIN_SENSE_RANGE)
-                k_aggressiveness = (2.0 * COMMUNICATION_RANGE - clamped_d) / (
+                k_aggressiveness = 0.0
+                if tx_d_min < 2.0 * COMMUNICATION_RANGE:
+                    clamped_d = max(tx_d_min, MIN_SENSE_RANGE)
+                    k_aggressiveness = (2.0 * COMMUNICATION_RANGE - clamped_d) / (
                             2.0 * COMMUNICATION_RANGE - MIN_SENSE_RANGE)
 
                 ALPHA_BONUS = 1.0
@@ -132,6 +132,7 @@ class AdHocEnv:
                 else:
                     reward = REWARD_FAIL - BETA_PENALTY * k_aggressiveness
             else:
+                # [关闭自适应奖励：传统的固定奖励]
                 if is_success:
                     reward = REWARD_SUCCESS
                     total_success += 1
@@ -151,5 +152,4 @@ class AdHocEnv:
 
             tx.status = 'IDLE'
 
-        # avg_reward = total_step_reward / num_updated_nodes if num_updated_nodes > 0 else 0.0 # 把计算平均值的工作统一交给 main.py 即可
         return total_success, total_step_reward, num_updated_nodes

@@ -11,7 +11,7 @@ SEED = 42
 # 2. 网络拓扑与物理模型 (距离布尔模型)
 # ===========================
 AREA_SIZE = 200.0
-LAMBDA_U = 0.001
+LAMBDA_U = 0.002
 COMMUNICATION_RANGE = 30.0   # 基础通信距离 (Rc)
 
 # 【核心重构】基于距离的感知范围 (Rs) 设定
@@ -45,7 +45,7 @@ ACTION_DIM = MAX_NEIGHBORS * len(RS_SET)
 # ===========================
 # 5. 训练与统计参数
 # ===========================
-TOTAL_SLOTS = 100000
+TOTAL_SLOTS = 60000
 STATS_INTERVAL = 20
 
 LR = 3e-4
