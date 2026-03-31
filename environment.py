@@ -152,10 +152,11 @@ class AdHocEnv:
             else:
                 reward = REWARD_FAIL - BETA_PENALTY * k_aggressiveness
 
-            # --- B & C. 根据消融开关决定是否发放利他奖励 ---
-            if self.use_altruistic_bonus:
-                ALTRUISTIC_BONUS = 0.5  # 每次侦听到邻居 ACK 获得的额外奖励
-                reward += ALTRUISTIC_BONUS * tx.overheard_acks
+            # --- B & C. 根据消融开关决定是否发放利他奖励 (结合刷分限制) ---
+            if getattr(self, 'use_altruistic_bonus', False):
+                ALTRUISTIC_BONUS = 0.5  # 定义额外奖励系数
+                effective_acks = min(tx.overheard_acks, 1)  # 最高限制算 2 次，防止恶意退避刷分
+                reward += ALTRUISTIC_BONUS * effective_acks
 
             total_step_reward += reward
             num_updated_nodes += 1

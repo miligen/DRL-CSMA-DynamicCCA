@@ -4,14 +4,14 @@ import numpy as np
 # ===========================
 # 1. 基础设置
 # ===========================
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device("cpu")
 SEED = 42
 
 # ===========================
 # 2. 网络拓扑与物理模型 (距离布尔模型)
 # ===========================
-AREA_SIZE = 100.0
-LAMBDA_U = 0.002
+AREA_SIZE = 200.0
+LAMBDA_U = 0.004
 COMMUNICATION_RANGE = 30.0   # 基础通信距离 (Rc)
 
 # 【核心重构】基于距离的感知范围 (Rs) 设定
